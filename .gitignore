@@ -1,0 +1,6 @@
+/data/*
+!/data/.htaccess
+!/data/uploads/
+/data/uploads/*
+!/data/uploads/.gitkeep
+/.env
