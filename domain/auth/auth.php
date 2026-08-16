@@ -27,33 +27,39 @@ function wiki_auth_status()
 #[_POST_("/auth/register")]
 function wiki_auth_register()
 {
+    if (!wiki_is_installed()) {
+        wiki_abort(503, "INSTALL_REQUIRED", ["installUrl" => "/install.php"]);
+    }
+    // 신규 설치의 첫 관리자는 install.php가 만든다. 등록 API는 복구·레거시용으로만 연다.
     if (!wiki_config("allow_register") || wiki_writer_exists()) {
-        wiki_abort(403, "이 위키는 작성자 한 명만 가입할 수 있습니다.");
+        wiki_abort(403, "REGISTER_CLOSED");
     }
 
     $username = trim((string) wiki_input("username", ""));
     $password = (string) wiki_input("password", "");
 
     if (!preg_match('/^[a-zA-Z0-9_]{3,32}$/', $username)) {
-        wiki_abort(400, "아이디는 3~32자의 영문, 숫자, 밑줄만 사용할 수 있습니다.");
+        wiki_abort(400, "USERNAME_INVALID");
     }
     if (strlen($password) < 6) {
-        wiki_abort(400, "비밀번호는 6자 이상이어야 합니다.");
+        wiki_abort(400, "PASSWORD_TOO_SHORT");
     }
 
     $db = wiki_db();
     $stmt = $db->prepare("SELECT id FROM users WHERE username = ?");
     $stmt->execute([$username]);
     if ($stmt->fetch()) {
-        wiki_abort(409, "이미 사용 중인 아이디입니다.");
+        wiki_abort(409, "USERNAME_TAKEN");
     }
 
     try {
         $stmt = $db->prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'writer')");
         $stmt->execute([$username, password_hash($password, PASSWORD_BCRYPT, ["cost" => 10])]);
     } catch ( PDOException $e ) {
-        if (strpos($e->getMessage(), "UNIQUE") !== false) {
-            wiki_abort(409, "이미 사용 중인 아이디입니다.");
+        if (($e->errorInfo[0] ?? "") === "23000"
+            || stripos($e->getMessage(), "unique") !== false
+            || stripos($e->getMessage(), "duplicate") !== false) {
+            wiki_abort(409, "USERNAME_TAKEN");
         }
         throw $e;
     }
@@ -92,7 +98,7 @@ function wiki_auth_login()
     $row = $stmt->fetch();
 
     if (!$row || !password_verify($password, (string) $row["password_hash"])) {
-        wiki_abort(401, "아이디 또는 비밀번호가 올바르지 않습니다.");
+        wiki_abort(401, "INVALID_CREDENTIALS");
     }
 
     $user = wiki_public_user($row);
@@ -119,7 +125,7 @@ function wiki_auth_me()
     $row = $stmt->fetch();
 
     if (!$row) {
-        wiki_abort(401, "사용자를 찾을 수 없습니다.");
+        wiki_abort(401, "USER_NOT_FOUND");
     }
 
     return wiki_ok(["user" => wiki_public_user($row)]);

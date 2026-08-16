@@ -5,24 +5,26 @@ Node.js `wikiman-backend`를 일반 PHP 호스팅용으로 포팅하는 프로�
 
 ## 환경
 
-- PHP 8.1+ · PDO SQLite · Apache mod_rewrite
+- PHP 8.1+ · PDO SQLite 또는 PDO MySQL · Apache mod_rewrite
 - 앱 코드: 이 저장소 루트
 - 프레임워크: phastapiv2 (`config.phastapi.php`의 `$G_PHASTAPI_CUSTOM_DIR`로 이 앱을 지정)
 - API 주소: 동일 오리진 `/api`
-- DB와 업로드: `data/` (커밋 및 직접 웹 접근 금지)
+- 설치 설정·SQLite DB·업로드: `data/` (커밋 및 직접 웹 접근 금지)
 
 ## 계약
 
 - 기준 구현은 [wikiman-backend](https://github.com/kendrickkim/wikiman-backend).
 - [wikiman-frontend](https://github.com/kendrickkim/wikiman-frontend)가 기대하는 경로와 JSON 형태를 유지한다.
 - 성공 응답을 `success/data`로 감싸지 않는다.
-- 오류는 `{ "error": "한국어 메시지" }`와 정확한 HTTP 상태 코드를 사용한다.
+- 오류는 `{ "error": "STABLE_CODE", "params"?: { ... } }`와 정확한 HTTP 상태 코드를 사용한다.
 - 인증은 `Authorization: Bearer` 우선, `wikiman_token` 쿠키를 보조로 사용한다.
 - draft/private는 작성자만, 비공개 카테고리 트리는 익명에게 숨긴다.
+- `/posts/{id}` 소셜 메타도 같은 익명 읽기 권한을 적용하며 비공개 본문을 노출하지 않는다.
 
 ## 구조 (PHAST 규약)
 
 - `config.phastapi.override.php` — 도메인 경로, 로그, 응답 포매터, pre-router 등록
+- `public/index.php`, `install.php`, `libs/installer/` — 정적 파일·SPA·OG 호스트와 웹 설치기
 - `attribute/attribute.php` — `WIKI_LOGIN`, `WIKI_WRITER` 권한 속성
 - `filter/filter.php` — 속성을 읽어 인증을 강제하는 IN 필터
 - `libs/common/wiki.*.php` — 설정·응답·JWT·DB·요청·도메인 공용 함수 (요청마다 자동 로드)
@@ -34,7 +36,7 @@ Node.js `wikiman-backend`를 일반 PHP 호스팅용으로 포팅하는 프로�
 ## 응답과 오류 처리
 
 - 성공: `return wiki_ok($body, $status)`
-- 실패: 어디서든 `wiki_abort($status, "메시지")` (즉시 출력 후 종료)
+- 실패: 어디서든 `wiki_abort($status, "STABLE_CODE", $params)` (즉시 출력 후 종료)
 - 프레임워크의 `PReturn()`은 `$G_PHASTAPI_RESPONSE_FORMATTER`(= `wiki_format_response`)를 거쳐
   라우팅 실패·예외까지 모두 Wikiman 규격으로 나간다.
 - 트랜잭션이 필요하면 `wiki_transaction(function (PDO $db) { ... })`를 쓴다.
@@ -50,5 +52,6 @@ Node.js `wikiman-backend`를 일반 PHP 호스팅용으로 포팅하는 프로�
 
 - `.jwt-secret`, `data/wiki.db`, `data/uploads/`를 커밋하지 않는다.
 - SQL 문자열에 사용자 입력을 직접 결합하지 않는다. (항상 바인딩한다)
+- SQL을 추가할 때 SQLite와 MySQL 양쪽 문법을 확인하고, 차이가 있으면 `wiki_db_driver()`로 분기한다.
 - PHAST의 자체 토큰(`PHASTAPI_AUTH`)을 Wikiman 인증에 사용하지 않는다.
 - 사용자가 요청하지 않은 커밋·푸시를 하지 않는다.

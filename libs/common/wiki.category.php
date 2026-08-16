@@ -123,11 +123,13 @@ function wiki_parse_id( $value )
 
 function wiki_next_sort_order( $parent_id )
 {
+    // MySQL native prepare는 동일 named placeholder 재사용을 허용하지 않는다.
     $stmt = wiki_db()->prepare(
         "SELECT COALESCE(MAX(sort_order), 0) FROM categories
-         WHERE (parent_id = :parent OR (parent_id IS NULL AND :parent IS NULL))"
+         WHERE (parent_id = ? OR (parent_id IS NULL AND ? IS NULL))"
     );
-    $stmt->bindValue(":parent", $parent_id, $parent_id === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+    $stmt->bindValue(1, $parent_id, $parent_id === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+    $stmt->bindValue(2, $parent_id, $parent_id === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
     $stmt->execute();
     return (int) $stmt->fetchColumn() + 1;
 }

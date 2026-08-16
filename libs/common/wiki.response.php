@@ -32,9 +32,13 @@ function wiki_send( $body, $status = 200 )
 /**
  * 어디서든 즉시 에러 응답으로 종료한다. 열려 있는 트랜잭션은 PDO 종료 시 롤백된다.
  */
-function wiki_abort( $status, $message )
+function wiki_abort( $status, $code, $params = [] )
 {
-    wiki_send(["error" => $message], $status);
+    $body = ["error" => (string) $code];
+    if (is_array($params) && count($params) > 0) {
+        $body["params"] = $params;
+    }
+    wiki_send($body, $status);
 }
 
 /**
@@ -65,9 +69,9 @@ function wiki_format_response( $data, $false_message = "" )
 function wiki_framework_error( $code )
 {
     $known = [
-        "NOT_MATCHED_API" => [404, "API를 찾을 수 없습니다."],
-        "UNPROCESSABLE_ENTITY" => [400, "올바른 JSON 요청이 아닙니다."],
-        "UNAUTHORIZED" => [401, "로그인이 필요합니다."],
+        "NOT_MATCHED_API" => [404, "API_NOT_FOUND"],
+        "UNPROCESSABLE_ENTITY" => [400, "REQUEST_INVALID"],
+        "UNAUTHORIZED" => [401, "UNAUTHORIZED"],
     ];
 
     $key = is_string($code) ? $code : "";
@@ -76,5 +80,5 @@ function wiki_framework_error( $code )
     }
 
     // 예기치 못한 예외는 메시지를 그대로 노출하지 않는다.
-    return [500, wiki_config("debug") && $key !== "" ? $key : "서버 오류가 발생했습니다."];
+    return [500, "SERVER_ERROR"];
 }

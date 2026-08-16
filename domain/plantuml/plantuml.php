@@ -12,22 +12,22 @@
 function wiki_plantuml_post()
 {
     if (wiki_plantuml_rate_limited()) {
-        wiki_abort(429, "PlantUML 요청이 너무 많습니다. 잠시 후 다시 시도하세요.");
+        wiki_abort(429, "PLANTUML_RATE_LIMITED");
     }
     $source = (string) wiki_input("source", wiki_input("text", ""));
     if (trim($source) === "") {
-        wiki_abort(400, "PlantUML 소스가 필요합니다.");
+        wiki_abort(400, "PLANTUML_SOURCE_REQUIRED");
     }
     if (strlen($source) > WIKI_PLANTUML_MAX_SOURCE_BYTES) {
-        wiki_abort(400, "PlantUML 소스가 너무 깁니다.");
+        wiki_abort(400, "PLANTUML_SOURCE_TOO_LONG");
     }
     try {
         wiki_plantuml_send_svg(wiki_plantuml_fetch_svg(wiki_plantuml_encode($source)));
     } catch ( WIKI_PLANTUML_ERROR $error ) {
-        wiki_abort(502, $error->getMessage());
+        wiki_abort(502, "PLANTUML_RENDER_FAILED");
     } catch ( Throwable $error ) {
         error_log("wikiman: PlantUML rendering failed - " . $error);
-        wiki_abort(502, "PlantUML 서버에 연결할 수 없습니다.");
+        wiki_abort(502, "PLANTUML_UNREACHABLE");
     }
 }
 
@@ -41,18 +41,18 @@ function wiki_plantuml_post()
 function wiki_plantuml_get()
 {
     if (wiki_plantuml_rate_limited()) {
-        wiki_abort(429, "PlantUML 요청이 너무 많습니다. 잠시 후 다시 시도하세요.");
+        wiki_abort(429, "PLANTUML_RATE_LIMITED");
     }
     $encoded = (string) wiki_uarg("encoded");
     if (!preg_match('/^[A-Za-z0-9_-]{1,20000}$/', $encoded)) {
-        wiki_abort(400, "PlantUML 요청이 올바르지 않습니다.");
+        wiki_abort(400, "PLANTUML_REQUEST_INVALID");
     }
     try {
         wiki_plantuml_send_svg(wiki_plantuml_fetch_svg($encoded));
     } catch ( WIKI_PLANTUML_ERROR $error ) {
-        wiki_abort(502, $error->getMessage());
+        wiki_abort(502, "PLANTUML_RENDER_FAILED");
     } catch ( Throwable $error ) {
         error_log("wikiman: PlantUML rendering failed - " . $error);
-        wiki_abort(502, "PlantUML 서버에 연결할 수 없습니다.");
+        wiki_abort(502, "PLANTUML_UNREACHABLE");
     }
 }

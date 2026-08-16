@@ -76,8 +76,11 @@ function wiki_setting_top_menu_get()
 function wiki_setting_top_menu_put()
 {
     $input = wiki_input("items", []);
-    if (!is_array($input) || count($input) > 20) {
-        wiki_abort(400, "상단 메뉴는 최대 20개까지 설정할 수 있습니다.");
+    if (!is_array($input)) {
+        wiki_abort(400, "TOP_MENU_NOT_ARRAY");
+    }
+    if (count($input) > 20) {
+        wiki_abort(400, "TOP_MENU_MAX_ITEMS", ["max" => 20]);
     }
 
     $items = [];
@@ -89,33 +92,31 @@ function wiki_setting_top_menu_put()
 
         $label = trim((string) ($entry["label"] ?? ""));
         if ($label === "" || mb_strlen($label) > 30) {
-            wiki_abort(400, "메뉴 이름은 1~30자로 입력하세요.");
+            wiki_abort(400, "TOP_MENU_LABEL_LENGTH", ["max" => 30]);
         }
 
-        $post_id = isset($entry["postId"]) && (int) $entry["postId"] > 0 ? (int) $entry["postId"] : null;
-        $url = $post_id === null ? trim((string) ($entry["url"] ?? "")) : null;
+        $has_post = isset($entry["postId"]) && (int) $entry["postId"] > 0;
+        $has_url = trim((string) ($entry["url"] ?? "")) !== "";
+        if ($has_post && $has_url) wiki_abort(400, "TOP_MENU_POST_AND_URL");
+        if (!$has_post && !$has_url) wiki_abort(400, "TOP_MENU_NEED_TARGET");
+
+        $post_id = $has_post ? (int) $entry["postId"] : null;
+        $url = $post_id === null ? trim((string) $entry["url"]) : null;
 
         if ($post_id !== null) {
             $stmt = wiki_db()->prepare("SELECT id FROM posts WHERE id = ? AND deleted_at IS NULL");
             $stmt->execute([$post_id]);
             if (!$stmt->fetch()) {
-                wiki_abort(400, "메뉴에 연결할 글을 찾을 수 없습니다.");
+                wiki_abort(400, "TOP_MENU_POST_NOT_FOUND");
             }
             $unique = "post:" . $post_id;
         } else {
-            if ($url === "" || mb_strlen($url) > 500
-                || (!str_starts_with($url, "/") && !filter_var($url, FILTER_VALIDATE_URL))) {
-                wiki_abort(400, "올바른 내부 경로 또는 HTTP(S) 주소를 입력하세요.");
-            }
-            $scheme = parse_url($url, PHP_URL_SCHEME);
-            if ($scheme !== null && !in_array(strtolower($scheme), ["http", "https"], true)) {
-                wiki_abort(400, "HTTP(S) 주소만 사용할 수 있습니다.");
-            }
+            $url = wiki_normalize_top_menu_url($url);
             $unique = "url:" . $url;
         }
 
         if (isset($seen[$unique])) {
-            wiki_abort(400, "같은 글 또는 주소를 중복해서 등록할 수 없습니다.");
+            wiki_abort(400, $post_id !== null ? "TOP_MENU_DUPLICATE_POST" : "TOP_MENU_DUPLICATE_URL");
         }
         $seen[$unique] = true;
 

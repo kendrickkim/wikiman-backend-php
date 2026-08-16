@@ -14,14 +14,14 @@ function wiki_upload_image()
 {
     $files = wiki_upload_entries("image");
     if (!$files) {
-        wiki_abort(400, "이미지 파일이 필요합니다.");
+        wiki_abort(400, "IMAGE_REQUIRED");
     }
 
     $file = wiki_store_upload(
         $files[0],
         wiki_max_attachment_mb() * 1024 * 1024,
         array_keys(WIKI_IMAGE_MIME_TYPES),
-        "이미지 파일만 업로드할 수 있습니다."
+        "IMAGE_TYPE_INVALID"
     );
 
     return wiki_ok([
@@ -43,7 +43,7 @@ function wiki_upload_favicon()
 {
     $files = wiki_upload_entries("image");
     if (!$files) {
-        wiki_abort(400, "파비콘 이미지가 필요합니다.");
+        wiki_abort(400, "FAVICON_REQUIRED");
     }
 
     $allowed = array_merge(array_keys(WIKI_IMAGE_MIME_TYPES), ["image/x-icon", "image/vnd.microsoft.icon"]);
@@ -51,7 +51,7 @@ function wiki_upload_favicon()
         $files[0],
         2 * 1024 * 1024,
         $allowed,
-        "파비콘은 PNG, ICO, SVG, WebP, JPEG만 올릴 수 있습니다."
+        "FAVICON_TYPE_INVALID"
     );
 
     return wiki_ok(["url" => $file["url"]], 201);
@@ -69,10 +69,10 @@ function wiki_upload_files()
 {
     $entries = wiki_upload_entries("files");
     if (!$entries) {
-        wiki_abort(400, "올릴 파일이 필요합니다.");
+        wiki_abort(400, "FILES_REQUIRED");
     }
     if (count($entries) > WIKI_MAX_UPLOAD_FILES) {
-        wiki_abort(400, "한 번에 최대 20개까지 올릴 수 있습니다.");
+        wiki_abort(400, "UPLOAD_TOO_MANY", ["max" => 20]);
     }
 
     $max = wiki_max_attachment_mb() * 1024 * 1024;

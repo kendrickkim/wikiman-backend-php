@@ -40,7 +40,7 @@ function wiki_top_menu_items( $user = null )
 function wiki_settings( $user = null )
 {
     $values = [];
-    foreach (wiki_db()->query("SELECT key, value FROM settings")->fetchAll() as $row) {
+    foreach (wiki_db()->query("SELECT `key`, `value` FROM settings")->fetchAll() as $row) {
         $values[$row["key"]] = $row["value"];
     }
 
@@ -50,6 +50,10 @@ function wiki_settings( $user = null )
 
     return [
         "siteTitle" => $values["site_title"] ?? "Wikiman",
+        "databaseDriver" => wiki_db_driver(),
+        "backupSupported" => wiki_db_driver() === "sqlite",
+        "siteLanguage" => in_array(($values["site_language"] ?? "ko-KR"), ["ko-KR", "en-US"], true)
+            ? ($values["site_language"] ?? "ko-KR") : "ko-KR",
         "theme" => ($values["theme"] ?? "light") === "dark" ? "dark" : "light",
         "plantumlServer" => $values["plantuml_server"] ?? "https://www.plantuml.com/plantuml",
         "defaultEditor" => $values["default_editor"] ?? "ckeditor",
@@ -58,9 +62,16 @@ function wiki_settings( $user = null )
         "maxAttachmentMb" => (int) ($values["max_attachment_mb"] ?? 20),
         "categoryTreeExpand" => $values["category_tree_expand"] ?? "expanded",
         "categoryTreeSide" => $values["category_tree_side"] ?? "left",
+        "rightMenuDefaultOpen" => ($values["right_menu_default_open"] ?? "1") === "1",
         "fontScale" => (int) ($values["font_scale"] ?? 100),
         "topMenuVisible" => ($values["top_menu_visible"] ?? "1") === "1",
         "mobileQuickPostEnabled" => ($values["mobile_quick_post_enabled"] ?? "0") === "1",
+        "blogMode" => ($values["blog_mode"] ?? "0") === "1",
+        "blogShowHomepage" => ($values["blog_show_homepage"] ?? "0") === "1",
+        "blogPostsPerPage" => (int) ($values["blog_posts_per_page"] ?? 10),
+        "codeLineNumbers" => ($values["code_line_numbers"] ?? "0") === "1",
+        "quickPostEditor" => in_array(($values["quick_post_editor"] ?? "tui"), WIKI_EDITORS, true)
+            ? ($values["quick_post_editor"] ?? "tui") : "tui",
         "quickPostPromoteSourceMode" => $values["quick_post_promote_source_mode"] ?? "ask",
         "quickPostPromoteEditor" => $values["quick_post_promote_editor"] ?? "ask",
         "linkPreviewCacheTtlDays" => (int) ($values["link_preview_cache_ttl_days"] ?? 10),
@@ -73,11 +84,69 @@ function wiki_settings( $user = null )
 
 function wiki_save_setting( $key, $value )
 {
-    $stmt = wiki_db()->prepare(
-        "INSERT INTO settings (key, value) VALUES (?, ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-    );
+    $sql = wiki_db_driver() === "mysql"
+        ? "INSERT INTO settings (`key`, `value`) VALUES (?, ?)
+           ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)"
+        : "INSERT INTO settings (`key`, `value`) VALUES (?, ?)
+           ON CONFLICT(`key`) DO UPDATE SET `value` = excluded.`value`";
+    $stmt = wiki_db()->prepare($sql);
     $stmt->execute([$key, (string) $value]);
+}
+
+function wiki_setting_boolean( $value, $error_code )
+{
+    if ($value === true || $value === false) {
+        return $value ? 1 : 0;
+    }
+    $normalized = strtolower(trim((string) $value));
+    if (in_array($normalized, ["1", "true", "yes", "on"], true)) return 1;
+    if (in_array($normalized, ["0", "false", "no", "off"], true)) return 0;
+    wiki_abort(400, $error_code);
+}
+
+function wiki_setting_integer( $value, $minimum, $maximum, $error_code )
+{
+    if (filter_var($value, FILTER_VALIDATE_INT) === false) {
+        wiki_abort(400, $error_code);
+    }
+    $number = (int) $value;
+    if ($number < $minimum || $number > $maximum) {
+        wiki_abort(400, $error_code);
+    }
+    return $number;
+}
+
+function wiki_setting_editor( $value, $error_code )
+{
+    $editor = trim((string) $value);
+    if (!in_array($editor, WIKI_EDITORS, true)) {
+        wiki_abort(400, $error_code);
+    }
+    return $editor;
+}
+
+function wiki_normalize_top_menu_url( $value )
+{
+    $url = trim((string) $value);
+    if ($url === "") wiki_abort(400, "URL_REQUIRED");
+    if (mb_strlen($url) > 500) wiki_abort(400, "URL_TOO_LONG", ["max" => 500]);
+    if (preg_match('/[\s\x00-\x1F\x7F]/u', $url)) wiki_abort(400, "URL_WHITESPACE");
+
+    if (str_starts_with($url, "/")) {
+        if (str_starts_with($url, "//") || str_contains($url, "\\")) {
+            wiki_abort(400, "INTERNAL_PATH_INVALID");
+        }
+        return $url;
+    }
+
+    if (!preg_match('#^https?://#i', $url)) $url = "https://" . $url;
+    if (mb_strlen($url) > 500) wiki_abort(400, "URL_TOO_LONG", ["max" => 500]);
+    if (!filter_var($url, FILTER_VALIDATE_URL)) wiki_abort(400, "URL_INVALID");
+    $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
+    if (!in_array($scheme, ["http", "https"], true)) {
+        wiki_abort(400, "EXTERNAL_URL_INVALID");
+    }
+    return $url;
 }
 
 /**
@@ -89,50 +158,104 @@ function wiki_setting_schema()
         "siteTitle" => ["site_title", function ($value) {
             $value = trim((string) $value);
             if ($value === "" || mb_strlen($value) > 80) {
-                wiki_abort(400, "사이트 제목은 1~80자로 입력하세요.");
+                wiki_abort(400, "SITE_TITLE_LENGTH");
             }
             return $value;
         }],
+        "siteLanguage" => ["site_language", function ($value) {
+            $language = str_replace("_", "-", trim((string) $value));
+            if ($language === "ko") $language = "ko-KR";
+            if ($language === "en") $language = "en-US";
+            if (!in_array($language, ["ko-KR", "en-US"], true)) {
+                wiki_abort(400, "SITE_LANGUAGE_INVALID");
+            }
+            return $language;
+        }],
         "theme" => ["theme", function ($value) {
-            return $value === "dark" ? "dark" : "light";
+            if (!in_array($value, ["light", "dark"], true)) {
+                wiki_abort(400, "THEME_INVALID");
+            }
+            return $value;
         }],
         "plantumlServer" => ["plantuml_server", function ($value) {
-            return rtrim(trim((string) $value), "/");
+            $url = rtrim(trim((string) $value), "/");
+            if (!filter_var($url, FILTER_VALIDATE_URL)
+                || !in_array(strtolower((string) parse_url($url, PHP_URL_SCHEME)), ["http", "https"], true)) {
+                wiki_abort(400, "PLANTUML_URL_INVALID");
+            }
+            return $url;
         }],
-        "defaultEditor" => ["default_editor", "wiki_normalize_editor"],
-        "defaultEditorMobile" => ["default_editor_mobile", "wiki_normalize_editor"],
+        "defaultEditor" => ["default_editor", function ($value) {
+            return wiki_setting_editor($value, "DEFAULT_EDITOR_INVALID");
+        }],
+        "defaultEditorMobile" => ["default_editor_mobile", function ($value) {
+            return wiki_setting_editor($value, "DEFAULT_EDITOR_MOBILE_INVALID");
+        }],
         "favicon" => ["favicon", function ($value) {
-            return mb_substr(trim((string) $value), 0, 500);
+            $favicon = trim((string) $value);
+            if ($favicon === "") return "";
+            if (!preg_match('#^/api/files/([^/?\#]+)$#', $favicon, $matches)
+                || basename($matches[1]) !== $matches[1]) {
+                wiki_abort(400, "FAVICON_UPLOAD_ONLY");
+            }
+            return $favicon;
         }],
         "maxAttachmentMb" => ["max_attachment_mb", function ($value) {
-            return max(1, min(200, (int) $value));
+            return wiki_setting_integer($value, 1, 200, "MAX_ATTACHMENT_MB_INVALID");
         }],
         "categoryTreeExpand" => ["category_tree_expand", function ($value) {
-            return in_array($value, ["expanded", "collapsed", "root"], true) ? $value : "expanded";
+            if (!in_array($value, ["expanded", "collapsed", "root"], true)) {
+                wiki_abort(400, "CATEGORY_TREE_EXPAND_INVALID");
+            }
+            return $value;
         }],
         "categoryTreeSide" => ["category_tree_side", function ($value) {
-            return $value === "right" ? "right" : "left";
+            if (!in_array($value, ["left", "right"], true)) {
+                wiki_abort(400, "CATEGORY_TREE_SIDE_INVALID");
+            }
+            return $value;
+        }],
+        "rightMenuDefaultOpen" => ["right_menu_default_open", function ($value) {
+            return wiki_setting_boolean($value, "RIGHT_MENU_DEFAULT_OPEN_INVALID");
         }],
         "fontScale" => ["font_scale", function ($value) {
-            return max(60, min(120, (int) $value));
+            return wiki_setting_integer($value, 60, 120, "FONT_SCALE_INVALID");
         }],
         "topMenuVisible" => ["top_menu_visible", function ($value) {
-            return filter_var($value, FILTER_VALIDATE_BOOLEAN) ? 1 : 0;
+            return wiki_setting_boolean($value, "TOP_MENU_VISIBLE_INVALID");
         }],
         "mobileQuickPostEnabled" => ["mobile_quick_post_enabled", function ($value) {
-            return filter_var($value, FILTER_VALIDATE_BOOLEAN) ? 1 : 0;
+            return wiki_setting_boolean($value, "MOBILE_QUICK_POST_INVALID");
+        }],
+        "blogMode" => ["blog_mode", function ($value) {
+            return wiki_setting_boolean($value, "BLOG_MODE_INVALID");
+        }],
+        "blogShowHomepage" => ["blog_show_homepage", function ($value) {
+            return wiki_setting_boolean($value, "BLOG_SHOW_HOMEPAGE_INVALID");
+        }],
+        "blogPostsPerPage" => ["blog_posts_per_page", function ($value) {
+            return wiki_setting_integer($value, 1, 100, "BLOG_POSTS_PER_PAGE_INVALID");
+        }],
+        "codeLineNumbers" => ["code_line_numbers", function ($value) {
+            return wiki_setting_boolean($value, "CODE_LINE_NUMBERS_INVALID");
+        }],
+        "quickPostEditor" => ["quick_post_editor", function ($value) {
+            return wiki_setting_editor($value, "QUICK_POST_EDITOR_INVALID");
         }],
         "quickPostPromoteSourceMode" => ["quick_post_promote_source_mode", function ($value) {
-            return in_array($value, ["ask", "delete", "keep"], true) ? $value : "ask";
+            if (!in_array($value, ["ask", "delete", "keep"], true)) {
+                wiki_abort(400, "QUICK_POST_PROMOTE_SOURCE_INVALID");
+            }
+            return $value;
         }],
         "quickPostPromoteEditor" => ["quick_post_promote_editor", function ($value) {
-            return $value === "ask" ? "ask" : wiki_normalize_editor($value);
+            return $value === "ask" ? "ask" : wiki_setting_editor($value, "QUICK_POST_PROMOTE_EDITOR_INVALID");
         }],
         "linkPreviewCacheTtlDays" => ["link_preview_cache_ttl_days", function ($value) {
-            return max(1, min(365, (int) $value));
+            return wiki_setting_integer($value, 1, 365, "LINK_PREVIEW_CACHE_TTL_INVALID");
         }],
         "linkPreviewFailureTtlDays" => ["link_preview_failure_ttl_days", function ($value) {
-            return max(1, min(365, (int) $value));
+            return wiki_setting_integer($value, 1, 365, "LINK_PREVIEW_FAILURE_TTL_INVALID");
         }],
     ];
 }

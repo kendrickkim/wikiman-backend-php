@@ -9,6 +9,10 @@ function filter_wikiman_authorization()
 {
     @include_once(__DIR__ . "/../attribute/attribute.php");
 
+    if (!wiki_is_installed()) {
+        wiki_abort(503, "INSTALL_REQUIRED", ["installUrl" => "/install.php"]);
+    }
+
     $args = FILTER::GetArgs();
     $reflection = new ReflectionFunction($args->func);
 

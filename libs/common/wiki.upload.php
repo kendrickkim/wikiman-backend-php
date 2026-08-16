@@ -12,7 +12,7 @@ const WIKI_IMAGE_MIME_TYPES = [
 
 function wiki_max_attachment_mb()
 {
-    $value = wiki_db()->query("SELECT value FROM settings WHERE key = 'max_attachment_mb'")->fetchColumn();
+    $value = wiki_db()->query("SELECT `value` FROM settings WHERE `key` = 'max_attachment_mb'")->fetchColumn();
     return max(1, min(200, (int) ($value ?: 20)));
 }
 
@@ -69,12 +69,12 @@ function wiki_check_upload( $file, $max_bytes )
 
     $error = (int) ($file["error"] ?? UPLOAD_ERR_NO_FILE);
     if ($error !== UPLOAD_ERR_OK) {
-        wiki_abort(400, wiki_upload_error_message($error, $max_mb));
+        wiki_abort(400, $error === UPLOAD_ERR_NO_FILE ? "FILES_REQUIRED" : "UPLOAD_FAILED");
     }
 
     $size = (int) ($file["size"] ?? 0);
     if ($size <= 0 || $size > $max_bytes) {
-        wiki_abort(400, "파일 크기는 {$max_mb}MB를 넘을 수 없습니다.");
+        wiki_abort(400, "UPLOAD_TOO_LARGE", ["max" => $max_mb]);
     }
 }
 
@@ -89,13 +89,13 @@ function wiki_store_upload( $file, $max_bytes, $allowed_mime = null, $type_messa
     $size = (int) $file["size"];
     $tmp = (string) ($file["tmp_name"] ?? "");
     if ($tmp === "" || (!is_uploaded_file($tmp) && PHP_SAPI !== "cli-server")) {
-        wiki_abort(400, "올바른 업로드 파일이 아닙니다.");
+        wiki_abort(400, "UPLOAD_FAILED");
     }
 
     $finfo = new finfo(FILEINFO_MIME_TYPE);
     $mime = (string) ($finfo->file($tmp) ?: "application/octet-stream");
     if ($allowed_mime !== null && !in_array($mime, $allowed_mime, true)) {
-        wiki_abort(400, $type_message ?: "허용되지 않은 파일 형식입니다.");
+        wiki_abort(400, $type_message ?: "UPLOAD_TYPE_INVALID");
     }
 
     $original_name = mb_substr(basename((string) ($file["name"] ?? "file")), 0, 200);
@@ -106,7 +106,7 @@ function wiki_store_upload( $file, $max_bytes, $allowed_mime = null, $type_messa
     $target = wiki_config("uploads") . "/" . $stored_name;
     $moved = is_uploaded_file($tmp) ? move_uploaded_file($tmp, $target) : rename($tmp, $target);
     if (!$moved) {
-        wiki_abort(500, "업로드 파일을 저장하지 못했습니다.");
+        wiki_abort(500, "UPLOAD_FAILED");
     }
     @chmod($target, 0640);
 
@@ -135,7 +135,7 @@ function wiki_upload_path( $name )
 
 function wiki_favicon_stored_name()
 {
-    $value = (string) (wiki_db()->query("SELECT value FROM settings WHERE key = 'favicon'")->fetchColumn() ?: "");
+    $value = (string) (wiki_db()->query("SELECT `value` FROM settings WHERE `key` = 'favicon'")->fetchColumn() ?: "");
     return preg_match('#^/api/files/([^/?\#]+)$#', $value, $match) ? basename(rawurldecode($match[1])) : "";
 }
 

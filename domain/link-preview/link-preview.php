@@ -13,16 +13,16 @@
 function wiki_link_preview_get()
 {
     if (wiki_preview_rate_limited()) {
-        wiki_abort(429, "요청이 너무 많습니다. 잠시 후 다시 시도하세요.");
+        wiki_abort(429, "RATE_LIMITED");
     }
 
     try {
         return wiki_ok(["preview" => wiki_fetch_link_preview(wiki_query("url"))]);
     } catch ( WIKI_PREVIEW_ERROR $error ) {
-        wiki_abort($error->status, $error->getMessage());
+        wiki_abort($error->status, "LINK_PREVIEW_FAILED");
     } catch ( Throwable $error ) {
         error_log("wikiman: link preview failed - " . $error);
-        wiki_abort(400, "링크 미리보기에 실패했습니다.");
+        wiki_abort(400, "LINK_PREVIEW_FAILED");
     }
 }
 

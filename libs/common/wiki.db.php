@@ -1,17 +1,19 @@
 <?php
 
 /**
- * SQLite 연결(지연 생성). 첫 호출에서 스키마를 보장한다.
+ * 설정된 PDO 데이터베이스에 지연 연결하고 첫 호출에서 스키마를 보장한다.
  */
 function wiki_db( $action = null )
 {
     static $db = null;
     if ($action === "close") {
         if ($db instanceof PDO) {
-            try {
-                $db->exec("PRAGMA wal_checkpoint(TRUNCATE)");
-            } catch ( Throwable $error ) {
-                error_log("wikiman: sqlite checkpoint failed - " . $error->getMessage());
+            if (wiki_db_driver() === "sqlite") {
+                try {
+                    $db->exec("PRAGMA wal_checkpoint(TRUNCATE)");
+                } catch ( Throwable $error ) {
+                    error_log("wikiman: sqlite checkpoint failed - " . $error->getMessage());
+                }
             }
         }
         $db = null;
@@ -24,24 +26,45 @@ function wiki_db( $action = null )
     wiki_make_dir(wiki_config("data_dir"));
     wiki_make_dir(wiki_config("uploads"));
 
-    if (!extension_loaded("pdo_sqlite")) {
-        wiki_abort(500, "PHP pdo_sqlite 확장이 필요합니다.");
+    if (!wiki_is_installed()) {
+        wiki_abort(503, "INSTALL_REQUIRED", ["installUrl" => "/install.php"]);
+    }
+
+    $driver = wiki_db_driver();
+    if ($driver === "sqlite" && !extension_loaded("pdo_sqlite")) {
+        wiki_abort(500, "SQLITE_EXTENSION_REQUIRED");
+    }
+    if ($driver === "mysql" && !extension_loaded("pdo_mysql")) {
+        wiki_abort(500, "MYSQL_EXTENSION_REQUIRED");
     }
 
     try {
-        $db = new PDO("sqlite:" . wiki_config("database"), null, null, [
+        $db_config = wiki_config("db");
+        $dsn = $driver === "mysql"
+            ? "mysql:host=" . $db_config["host"]
+                . ";port=" . $db_config["port"]
+                . ";dbname=" . $db_config["database"]
+                . ";charset=" . $db_config["charset"]
+            : "sqlite:" . wiki_config("database");
+        $db = new PDO($dsn,
+            $driver === "mysql" ? $db_config["username"] : null,
+            $driver === "mysql" ? $db_config["password"] : null, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES => false,
         ]);
     } catch ( PDOException $e ) {
-        error_log("wikiman: sqlite open failed - " . $e->getMessage());
-        wiki_abort(500, "데이터베이스를 열 수 없습니다.");
+        error_log("wikiman: database open failed - " . $e->getMessage());
+        wiki_abort(503, "INSTALL_REQUIRED", ["installUrl" => "/install.php"]);
     }
 
-    $db->exec("PRAGMA journal_mode = WAL");
-    $db->exec("PRAGMA foreign_keys = ON");
-    $db->exec("PRAGMA busy_timeout = 5000");
+    if ($driver === "sqlite") {
+        $db->exec("PRAGMA journal_mode = WAL");
+        $db->exec("PRAGMA foreign_keys = ON");
+        $db->exec("PRAGMA busy_timeout = 5000");
+    } else {
+        $db->exec("SET NAMES " . $db_config["charset"]);
+    }
 
     wiki_ensure_schema($db);
     return $db;
@@ -63,12 +86,17 @@ function wiki_transaction( $callback )
             $db->rollBack();
         }
         error_log("wikiman: transaction failed - " . $e);
-        wiki_abort(500, wiki_config("debug") ? $e->getMessage() : "서버 오류가 발생했습니다.");
+        wiki_abort(500, "SERVER_ERROR");
     }
 }
 
 function wiki_ensure_schema( PDO $db )
 {
+    if (wiki_db_driver() === "mysql") {
+        wiki_ensure_schema_mysql($db);
+        return;
+    }
+
     $db->exec(<<<'SQL'
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -179,6 +207,7 @@ SQL);
     $defaults = [
         "schema_version" => "11",
         "site_title" => "Wikiman",
+        "site_language" => "ko-KR",
         "theme" => "light",
         "plantuml_server" => "https://www.plantuml.com/plantuml",
         "default_editor" => "ckeditor",
@@ -187,17 +216,159 @@ SQL);
         "max_attachment_mb" => "20",
         "category_tree_expand" => "expanded",
         "category_tree_side" => "left",
+        "right_menu_default_open" => "1",
         "font_scale" => "100",
         "top_menu_visible" => "1",
         "mobile_quick_post_enabled" => "0",
+        "blog_mode" => "0",
+        "blog_show_homepage" => "0",
+        "blog_posts_per_page" => "10",
+        "code_line_numbers" => "0",
+        "quick_post_editor" => "tui",
         "quick_post_promote_source_mode" => "ask",
         "quick_post_promote_editor" => "ask",
         "link_preview_cache_ttl_days" => "10",
         "link_preview_failure_ttl_days" => "1",
     ];
 
-    $insert = $db->prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)");
+    $insert = $db->prepare("INSERT OR IGNORE INTO settings (`key`, `value`) VALUES (?, ?)");
     foreach ($defaults as $key => $value) {
         $insert->execute([$key, $value]);
     }
+}
+
+function wiki_ensure_schema_mysql( PDO $db )
+{
+    $statements = [
+        "CREATE TABLE IF NOT EXISTS users (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+          username VARCHAR(32) NOT NULL UNIQUE,
+          password_hash VARCHAR(255) NOT NULL,
+          role VARCHAR(16) NOT NULL DEFAULT 'reader',
+          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS categories (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          parent_id BIGINT UNSIGNED NULL,
+          sort_order INT NOT NULL DEFAULT 0,
+          visibility VARCHAR(16) NOT NULL DEFAULT 'public',
+          created_by BIGINT UNSIGNED NULL,
+          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT fk_categories_parent FOREIGN KEY (parent_id) REFERENCES categories(id) ON DELETE SET NULL,
+          CONSTRAINT fk_categories_user FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+          INDEX idx_categories_parent (parent_id, sort_order)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS posts (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+          title VARCHAR(500) NOT NULL,
+          slug VARCHAR(255) NOT NULL UNIQUE,
+          category_id BIGINT UNSIGNED NULL,
+          author_id BIGINT UNSIGNED NOT NULL,
+          visibility VARCHAR(16) NOT NULL DEFAULT 'public',
+          status VARCHAR(16) NOT NULL DEFAULT 'published',
+          editor_type VARCHAR(20) NOT NULL DEFAULT 'ckeditor',
+          content LONGTEXT NOT NULL,
+          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          deleted_at DATETIME NULL,
+          CONSTRAINT fk_posts_category FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL,
+          CONSTRAINT fk_posts_author FOREIGN KEY (author_id) REFERENCES users(id),
+          INDEX idx_posts_list (deleted_at, status, visibility, updated_at),
+          INDEX idx_posts_category (category_id, deleted_at),
+          INDEX idx_posts_author (author_id),
+          FULLTEXT INDEX idx_posts_fulltext (title, content)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS settings (
+          `key` VARCHAR(191) NOT NULL PRIMARY KEY,
+          `value` TEXT NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS homepage_posts (
+          post_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+          sort_order INT NOT NULL DEFAULT 0,
+          CONSTRAINT fk_homepage_post FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+          INDEX idx_homepage_posts_sort (sort_order)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS upload_refs (
+          post_id BIGINT UNSIGNED NOT NULL,
+          stored_name VARCHAR(255) NOT NULL,
+          PRIMARY KEY (post_id, stored_name),
+          CONSTRAINT fk_upload_refs_post FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+          INDEX idx_upload_refs_name (stored_name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS post_keywords (
+          post_id BIGINT UNSIGNED NOT NULL,
+          keyword VARCHAR(191) NOT NULL,
+          sort_order INT NOT NULL DEFAULT 0,
+          PRIMARY KEY (post_id, keyword),
+          CONSTRAINT fk_post_keywords_post FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+          INDEX idx_post_keywords_keyword (keyword)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS post_attachments (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+          post_id BIGINT UNSIGNED NOT NULL,
+          stored_name VARCHAR(255) NOT NULL,
+          original_name VARCHAR(255) NOT NULL,
+          mime_type VARCHAR(191) NOT NULL DEFAULT 'application/octet-stream',
+          size BIGINT NOT NULL DEFAULT 0,
+          sort_order INT NOT NULL DEFAULT 0,
+          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT fk_post_attachments_post FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+          INDEX idx_post_attachments_post_id (post_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS top_menu_items (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+          label VARCHAR(30) NOT NULL,
+          post_id BIGINT UNSIGNED NULL,
+          url VARCHAR(500) NULL,
+          sort_order INT NOT NULL DEFAULT 0,
+          CONSTRAINT fk_top_menu_post FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+          INDEX idx_top_menu_items_sort (sort_order, id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS quick_posts (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+          author_id BIGINT UNSIGNED NOT NULL,
+          content LONGTEXT NOT NULL,
+          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT fk_quick_posts_author FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE,
+          INDEX idx_quick_posts_author_updated (author_id, updated_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS link_preview_cache (
+          url VARCHAR(768) NOT NULL PRIMARY KEY,
+          final_url TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL,
+          image TEXT NOT NULL,
+          site_name VARCHAR(255) NOT NULL DEFAULT '',
+          fetched_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_link_preview_cache_fetched (fetched_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS link_preview_rate (
+          client_key VARCHAR(191) NOT NULL,
+          hit_at BIGINT NOT NULL,
+          INDEX idx_link_preview_rate_client (client_key, hit_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "CREATE TABLE IF NOT EXISTS plantuml_rate (
+          client_key VARCHAR(191) NOT NULL,
+          hit_at BIGINT NOT NULL,
+          INDEX idx_plantuml_rate_client (client_key, hit_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+    ];
+    foreach ($statements as $sql) $db->exec($sql);
+
+    $defaults = [
+        "schema_version" => "11", "site_title" => "Wikiman", "site_language" => "ko-KR",
+        "theme" => "light", "plantuml_server" => "https://www.plantuml.com/plantuml",
+        "default_editor" => "ckeditor", "default_editor_mobile" => "ckeditor",
+        "favicon" => "", "max_attachment_mb" => "20", "category_tree_expand" => "expanded",
+        "category_tree_side" => "left", "right_menu_default_open" => "1", "font_scale" => "100",
+        "top_menu_visible" => "1", "mobile_quick_post_enabled" => "0", "blog_mode" => "0",
+        "blog_show_homepage" => "0", "blog_posts_per_page" => "10", "code_line_numbers" => "0",
+        "quick_post_editor" => "tui", "quick_post_promote_source_mode" => "ask",
+        "quick_post_promote_editor" => "ask", "link_preview_cache_ttl_days" => "10",
+        "link_preview_failure_ttl_days" => "1",
+    ];
+    $insert = $db->prepare("INSERT IGNORE INTO settings (`key`, `value`) VALUES (?, ?)");
+    foreach ($defaults as $key => $value) $insert->execute([$key, $value]);
 }

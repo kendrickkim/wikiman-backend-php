@@ -10,7 +10,8 @@
  *      keyword : [string] 키워드 정확히 일치
  *      q : [string] 제목·본문·키워드 검색
  *      page : [number] 1부터
- *      pageSize : [number] 10 | 20 | 50 | 100
+ *      pageSize : [number] 1~100
+ *      includeContent : [bool] 본문·첨부 포함
  * @ RETURN
  *      posts : [array] 글 목록
  *      total, page, pageSize : [number] 페이지 정보
@@ -55,8 +56,11 @@ function wiki_post_list()
     }
 
     $requested_size = (int) wiki_query("pageSize", wiki_query("limit", 10));
-    $page_size = in_array($requested_size, [10, 20, 50, 100], true) ? $requested_size : 10;
+    $page_size = $requested_size >= 1 && $requested_size <= 100 ? $requested_size : 10;
     $requested_page = max(1, (int) wiki_query("page", 1));
+    $include_content_raw = wiki_query("includeContent", false);
+    $include_content = $include_content_raw === true
+        || in_array(strtolower((string) $include_content_raw), ["1", "true"], true);
 
     $where_sql = implode(" AND ", array_map(function ($item) {
         return "(" . $item . ")";
@@ -67,7 +71,7 @@ function wiki_post_list()
     $total = (int) $count->fetchColumn();
     $page = min($requested_page, max(1, (int) ceil($total / $page_size)));
 
-    $stmt = $db->prepare(wiki_post_select() . " WHERE " . $where_sql
+    $stmt = $db->prepare(wiki_post_select($include_content) . " WHERE " . $where_sql
         . " ORDER BY posts.created_at DESC, posts.id DESC LIMIT ? OFFSET ?");
 
     $index = 1;
@@ -79,8 +83,8 @@ function wiki_post_list()
     $stmt->execute();
 
     return wiki_ok([
-        "posts" => array_map(function ($row) {
-            return wiki_post_map($row);
+        "posts" => array_map(function ($row) use ($include_content) {
+            return wiki_post_map($row, $include_content);
         }, $stmt->fetchAll()),
         "total" => $total,
         "page" => $page,
@@ -106,10 +110,11 @@ function wiki_post_keyword_list()
         $params[] = "%" . $q . "%";
     }
 
+    $keyword_group = wiki_db_driver() === "mysql" ? "pk.keyword" : "lower(pk.keyword)";
     $stmt = wiki_db()->prepare(
         "SELECT pk.keyword, COUNT(*) AS count FROM post_keywords pk
          JOIN posts ON posts.id = pk.post_id WHERE " . implode(" AND ", $where)
-        . " GROUP BY lower(pk.keyword) ORDER BY count DESC, pk.keyword COLLATE NOCASE ASC LIMIT 500"
+        . " GROUP BY " . $keyword_group . " ORDER BY count DESC, " . $keyword_group . " ASC LIMIT 500"
     );
     $stmt->execute($params);
 
@@ -169,7 +174,7 @@ function wiki_post_homepage_order()
         );
         $stmt->execute($ids);
         if (count($stmt->fetchAll(PDO::FETCH_COLUMN)) !== count($ids)) {
-            wiki_abort(400, "홈페이지 글을 찾을 수 없습니다.");
+            wiki_abort(400, "HOMEPAGE_POST_NOT_FOUND", ["id" => $id]);
         }
     }
 
@@ -246,10 +251,10 @@ function wiki_post_restore()
     $stmt = $db->prepare("SELECT id FROM posts WHERE id = ? AND deleted_at IS NOT NULL");
     $stmt->execute([$id]);
     if (!$stmt->fetch()) {
-        wiki_abort(404, "휴지통에서 글을 찾을 수 없습니다.");
+        wiki_abort(404, "POST_NOT_IN_TRASH");
     }
 
-    $stmt = $db->prepare("UPDATE posts SET deleted_at = NULL, updated_at = datetime('now') WHERE id = ?");
+    $stmt = $db->prepare("UPDATE posts SET deleted_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
     $stmt->execute([$id]);
 
     return wiki_ok(["post" => wiki_post_map(wiki_load_post($id), true)]);
@@ -272,7 +277,7 @@ function wiki_post_delete_permanent()
     $stmt->execute([$id]);
     $content = $stmt->fetchColumn();
     if ($content === false) {
-        wiki_abort(404, "휴지통에서 글을 찾을 수 없습니다.");
+        wiki_abort(404, "POST_NOT_IN_TRASH");
     }
 
     $names = wiki_content_upload_names((string) $content);
@@ -283,7 +288,7 @@ function wiki_post_delete_permanent()
     $stmt = $db->prepare("DELETE FROM posts WHERE id = ? AND deleted_at IS NOT NULL");
     $stmt->execute([$id]);
     if ($stmt->rowCount() === 0) {
-        wiki_abort(404, "휴지통에서 글을 찾을 수 없습니다.");
+        wiki_abort(404, "POST_NOT_IN_TRASH");
     }
 
     wiki_unlink_unused_uploads($names);
@@ -302,7 +307,7 @@ function wiki_post_file()
     $path = wiki_upload_path($name);
 
     if (!$path || !wiki_can_access_upload($name, wiki_uarg_int("id"))) {
-        wiki_abort(404, "파일을 찾을 수 없습니다.");
+        wiki_abort(404, "FILE_NOT_FOUND");
     }
 
     wiki_send_file($path);
@@ -322,7 +327,7 @@ function wiki_post_attachment_download()
     $stmt = $db->prepare("SELECT * FROM posts WHERE id = ?");
     $stmt->execute([$post_id]);
     if (!wiki_can_read_post($stmt->fetch() ?: null, wiki_current_user())) {
-        wiki_abort(404, "파일을 찾을 수 없습니다.");
+        wiki_abort(404, "FILE_NOT_FOUND");
     }
 
     $stmt = $db->prepare("SELECT * FROM post_attachments WHERE id = ? AND post_id = ?");
@@ -331,7 +336,7 @@ function wiki_post_attachment_download()
 
     $path = $attachment ? wiki_upload_path((string) $attachment["stored_name"]) : null;
     if (!$attachment || !$path) {
-        wiki_abort(404, "파일을 찾을 수 없습니다.");
+        wiki_abort(404, "FILE_NOT_FOUND");
     }
 
     wiki_send_file($path, (string) $attachment["original_name"], (string) $attachment["mime_type"]);
@@ -349,7 +354,7 @@ function wiki_post_detail()
 {
     $row = wiki_load_post(wiki_uarg_int("id"));
     if (!wiki_can_read_post($row, wiki_current_user())) {
-        wiki_abort(404, "글을 찾을 수 없습니다.");
+        wiki_abort(404, "POST_NOT_FOUND");
     }
 
     return wiki_ok(["post" => wiki_post_map($row, true)]);
@@ -370,7 +375,7 @@ function wiki_post_create()
     $title = trim((string) wiki_input("title", ""));
     $category_id = wiki_parse_id(wiki_input("categoryId", wiki_input("category_id")));
     if ($category_id !== null && !wiki_require_category($category_id)) {
-        wiki_abort(400, "카테고리를 찾을 수 없습니다.");
+        wiki_abort(400, "CATEGORY_NOT_FOUND");
     }
 
     $visibility = wiki_input("visibility") === "private" ? "private" : "public";
@@ -426,7 +431,7 @@ function wiki_post_update()
     $stmt->execute([$id]);
     $existing = $stmt->fetch();
     if (!$existing) {
-        wiki_abort(404, "글을 찾을 수 없습니다.");
+        wiki_abort(404, "POST_NOT_FOUND");
     }
 
     $title = wiki_has("title") ? trim((string) wiki_input("title")) : (string) $existing["title"];
@@ -436,7 +441,7 @@ function wiki_post_update()
         $category_id = wiki_parse_id(wiki_input("categoryId", wiki_input("category_id")));
     }
     if ($category_id !== null && !wiki_require_category($category_id)) {
-        wiki_abort(400, "카테고리를 찾을 수 없습니다.");
+        wiki_abort(400, "CATEGORY_NOT_FOUND");
     }
 
     $visibility = wiki_has("visibility")
@@ -459,15 +464,17 @@ function wiki_post_update()
     $attachments = wiki_normalize_attachments(wiki_input("attachments", []));
     $has_homepage = wiki_has("isHomepage");
     $homepage = wiki_input("isHomepage");
+    $has_homepage_sort = wiki_has("homepageSort");
     $homepage_sort = wiki_input("homepageSort");
 
     $removed = wiki_transaction(function ( PDO $db ) use (
         $id, $title, $slug, $category_id, $visibility, $status, $editor, $content,
-        $has_keywords, $keywords, $has_attachments, $attachments, $has_homepage, $homepage, $homepage_sort
+        $has_keywords, $keywords, $has_attachments, $attachments,
+        $has_homepage, $homepage, $has_homepage_sort, $homepage_sort
     ) {
         $stmt = $db->prepare(
             "UPDATE posts SET title = ?, slug = ?, category_id = ?, visibility = ?, status = ?,
-             editor_type = ?, content = ?, updated_at = datetime('now') WHERE id = ?"
+             editor_type = ?, content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
         );
         $stmt->execute([$title, $slug, $category_id, $visibility, $status, $editor, $content, $id]);
 
@@ -484,6 +491,12 @@ function wiki_post_update()
 
         if ($has_homepage) {
             wiki_apply_homepage($db, $id, $homepage, $homepage_sort);
+        } else if ($has_homepage_sort) {
+            $stmt = $db->prepare("SELECT 1 FROM homepage_posts WHERE post_id = ?");
+            $stmt->execute([$id]);
+            if ($stmt->fetchColumn()) {
+                wiki_apply_homepage($db, $id, true, $homepage_sort);
+            }
         }
 
         return $removed;
@@ -508,10 +521,10 @@ function wiki_post_delete()
     $db = wiki_db();
     $id = wiki_uarg_int("id");
 
-    $stmt = $db->prepare("UPDATE posts SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL");
+    $stmt = $db->prepare("UPDATE posts SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL");
     $stmt->execute([$id]);
     if ($stmt->rowCount() === 0) {
-        wiki_abort(404, "글을 찾을 수 없습니다.");
+        wiki_abort(404, "POST_NOT_FOUND");
     }
 
     $stmt = $db->prepare("DELETE FROM homepage_posts WHERE post_id = ?");

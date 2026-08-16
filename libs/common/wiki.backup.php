@@ -175,10 +175,10 @@ function wiki_backup_validate_database( $path )
     }
 }
 
-function wiki_backup_file_list()
+function wiki_backup_file_list( $database_path = null )
 {
     $files = [];
-    $db_path = wiki_config("database");
+    $db_path = $database_path ?: wiki_config("database");
     if (!is_file($db_path)) {
         wiki_backup_fail("백업할 데이터베이스가 없습니다.", 500);
     }
@@ -199,6 +199,26 @@ function wiki_backup_file_list()
         return strcmp($a["path"], $b["path"]);
     });
     return $files;
+}
+
+/**
+ * 열린 WAL DB를 파일 복사하지 않고 SQLite 자체 기능으로 일관된 단일 파일로 만든다.
+ */
+function wiki_backup_database_snapshot()
+{
+    $db = wiki_db();
+    $db->exec("PRAGMA wal_checkpoint(FULL)");
+    $path = wiki_config("data_dir") . "/.backup-db-" . bin2hex(random_bytes(8)) . ".db";
+    $quoted = str_replace("'", "''", $path);
+    try {
+        $db->exec("VACUUM INTO '" . $quoted . "'");
+        wiki_backup_validate_database($path);
+        return $path;
+    } catch ( Throwable $error ) {
+        @unlink($path);
+        if ($error instanceof WIKI_BACKUP_ERROR) throw $error;
+        wiki_backup_fail("데이터베이스 스냅샷을 만들지 못했습니다.", 500);
+    }
 }
 
 function wiki_backup_hash_range( $path, $offset, $length )
@@ -228,8 +248,9 @@ function wiki_backup_hash_range( $path, $offset, $length )
 function wiki_backup_create( $output_path )
 {
     $db = wiki_db();
-    $db->exec("PRAGMA wal_checkpoint(TRUNCATE)");
-    $files = wiki_backup_file_list();
+    $snapshot_path = wiki_backup_database_snapshot();
+    try {
+    $files = wiki_backup_file_list($snapshot_path);
     $created_at = new DateTimeImmutable("now", new DateTimeZone("UTC"));
     $meta = [
         "app" => "wikiman",
@@ -299,6 +320,9 @@ function wiki_backup_create( $output_path )
     $meta["payloadSha256"] = $digest;
     $meta["path"] = $output_path;
     return $meta;
+    } finally {
+        @unlink($snapshot_path);
+    }
 }
 
 function wiki_backup_read_header( $path )

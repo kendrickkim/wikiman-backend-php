@@ -46,10 +46,10 @@ function wiki_category_create()
     $visibility = wiki_input("visibility") === "private" ? "private" : "public";
 
     if ($name === "") {
-        wiki_abort(400, "카테고리 이름을 입력하세요.");
+        wiki_abort(400, "CATEGORY_NAME_REQUIRED");
     }
     if ($parent_id !== null && !wiki_require_category($parent_id)) {
-        wiki_abort(400, "상위 카테고리를 찾을 수 없습니다.");
+        wiki_abort(400, "PARENT_CATEGORY_NOT_FOUND");
     }
 
     $db = wiki_db();
@@ -74,12 +74,12 @@ function wiki_category_update()
     $id = wiki_uarg_int("id");
     $existing = wiki_find_category($id);
     if (!$existing) {
-        wiki_abort(404, "카테고리를 찾을 수 없습니다.");
+        wiki_abort(404, "CATEGORY_NOT_FOUND");
     }
 
     $name = wiki_has("name") ? trim((string) wiki_input("name")) : (string) $existing["name"];
     if ($name === "") {
-        wiki_abort(400, "카테고리 이름을 입력하세요.");
+        wiki_abort(400, "CATEGORY_NAME_REQUIRED");
     }
 
     $current_parent = $existing["parent_id"] === null ? null : (int) $existing["parent_id"];
@@ -89,10 +89,10 @@ function wiki_category_update()
         : $current_parent;
 
     if ($parent_id !== null && !wiki_require_category($parent_id)) {
-        wiki_abort(400, "상위 카테고리를 찾을 수 없습니다.");
+        wiki_abort(400, "PARENT_CATEGORY_NOT_FOUND");
     }
     if (wiki_category_would_cycle($id, $parent_id)) {
-        wiki_abort(400, "자기 자신 또는 하위 카테고리로는 이동할 수 없습니다.");
+        wiki_abort(400, "CATEGORY_MOVE_INTO_SELF");
     }
 
     $has_sort = wiki_has("sortOrder") || wiki_has("sort_order");
@@ -115,6 +115,81 @@ function wiki_category_update()
 }
 
 /***
+ * 카테고리에 연결된 글 수
+ * @ METHOD : GET
+ * @ URL : /categories/{id}/post-stats
+ */
+#[_GET_("/categories/{id}/post-stats"), WIKI_WRITER]
+function wiki_category_post_stats()
+{
+    $id = wiki_uarg_int("id");
+    if (!wiki_find_category($id)) {
+        wiki_abort(404, "CATEGORY_NOT_FOUND");
+    }
+
+    $stmt = wiki_db()->prepare(
+        "SELECT COUNT(*) FROM posts WHERE category_id = ? AND deleted_at IS NULL"
+    );
+    $stmt->execute([$id]);
+    $direct = (int) $stmt->fetchColumn();
+
+    $ids = wiki_category_descendants($id);
+    $placeholders = implode(",", array_fill(0, count($ids), "?"));
+    $stmt = wiki_db()->prepare(
+        "SELECT COUNT(*) FROM posts
+         WHERE deleted_at IS NULL AND category_id IN (" . $placeholders . ")"
+    );
+    $stmt->execute($ids);
+
+    return wiki_ok([
+        "direct" => $direct,
+        "withDescendants" => (int) $stmt->fetchColumn(),
+    ]);
+}
+
+/***
+ * 카테고리 글을 다른 카테고리 또는 미분류로 이동
+ * @ METHOD : POST
+ * @ URL : /categories/{id}/reassign-posts
+ */
+#[_POST_("/categories/{id}/reassign-posts"), WIKI_WRITER]
+function wiki_category_reassign_posts()
+{
+    $id = wiki_uarg_int("id");
+    if (!wiki_find_category($id)) {
+        wiki_abort(404, "CATEGORY_NOT_FOUND");
+    }
+
+    $target_id = wiki_parse_id(wiki_input(
+        "targetCategoryId",
+        wiki_input("target_category_id")
+    ));
+    if ($target_id !== null && !wiki_find_category($target_id)) {
+        wiki_abort(400, "CATEGORY_MOVE_TARGET_NOT_FOUND");
+    }
+
+    $include_descendants = wiki_input("includeDescendants", wiki_input("include_descendants", false)) === true;
+    if ($target_id === $id && !$include_descendants) {
+        wiki_abort(400, "CATEGORY_MOVE_SAME");
+    }
+
+    $source_ids = $include_descendants ? wiki_category_descendants($id) : [$id];
+    $placeholders = implode(",", array_fill(0, count($source_ids), "?"));
+    $stmt = wiki_db()->prepare(
+        "UPDATE posts SET category_id = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE deleted_at IS NULL AND category_id IN (" . $placeholders . ")"
+    );
+    $stmt->execute(array_merge([$target_id], $source_ids));
+
+    return wiki_ok([
+        "ok" => true,
+        "moved" => $stmt->rowCount(),
+        "includeDescendants" => $include_descendants,
+        "targetCategoryId" => $target_id,
+    ]);
+}
+
+/***
  * 카테고리 삭제 (하위 카테고리와 글은 상위로 올린다)
  * @ METHOD : DELETE
  * @ URL : /categories/{id}
@@ -127,7 +202,7 @@ function wiki_category_delete()
     $id = wiki_uarg_int("id");
     $existing = wiki_find_category($id);
     if (!$existing) {
-        wiki_abort(404, "카테고리를 찾을 수 없습니다.");
+        wiki_abort(404, "CATEGORY_NOT_FOUND");
     }
 
     wiki_transaction(function ( PDO $db ) use ($id, $existing) {

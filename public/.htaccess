@@ -1,0 +1,23 @@
+DirectoryIndex index.php
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # PHAST API는 기존 /api Alias 또는 Rewrite 설정에 맡깁니다.
+    RewriteCond %{REQUEST_URI} ^/api(?:/|$) [NC]
+    RewriteRule ^ - [L]
+
+    RewriteRule ^(?:\.wikiman-installed|\.htaccess)$ - [F,L]
+
+    # PHP 전면 컨트롤러와 설치 UI의 재작성 루프를 막습니다.
+    RewriteRule ^index\.php$ - [L]
+    RewriteRule ^install\.php$ - [L]
+
+    # 정적 파일·index.html·SPA history route 모두 설치/OG 게이트를 거칩니다.
+    RewriteRule ^ index.php [L,QSA]
+</IfModule>
+
+<IfModule !mod_rewrite.c>
+    DirectoryIndex index.php
+</IfModule>

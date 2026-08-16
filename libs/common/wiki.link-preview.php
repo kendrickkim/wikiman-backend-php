@@ -42,7 +42,7 @@ function wiki_preview_cache_clear()
 }
 
 /**
- * 1분에 30회. PHP 프로세스가 여러 개여도 SQLite를 통해 제한을 공유한다.
+ * 1분에 30회. PHP 프로세스가 여러 개여도 DB를 통해 제한을 공유한다.
  */
 function wiki_preview_rate_limited()
 {
@@ -337,12 +337,15 @@ function wiki_preview_parse_html( $html, $final_url )
 
 function wiki_preview_cache_get( $key, $ttl_days )
 {
-    $stmt = wiki_db()->prepare(
-        "SELECT final_url, title, description, image, site_name,
-                datetime(fetched_at) > datetime('now', ?) AS is_fresh
-         FROM link_preview_cache WHERE url = ?"
-    );
-    $stmt->execute(["-" . (int) $ttl_days . " days", $key]);
+    $mysql = wiki_db_driver() === "mysql";
+    $stmt = wiki_db()->prepare($mysql
+        ? "SELECT final_url, title, description, image, site_name,
+                  fetched_at > DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ? DAY) AS is_fresh
+           FROM link_preview_cache WHERE url = ?"
+        : "SELECT final_url, title, description, image, site_name,
+                  datetime(fetched_at) > datetime('now', ?) AS is_fresh
+           FROM link_preview_cache WHERE url = ?");
+    $stmt->execute([$mysql ? (int) $ttl_days : "-" . (int) $ttl_days . " days", $key]);
     $row = $stmt->fetch();
     if (!$row) {
         return ["value" => null, "fresh" => false];
@@ -361,13 +364,17 @@ function wiki_preview_cache_get( $key, $ttl_days )
 
 function wiki_preview_cache_set( $key, $preview )
 {
-    $stmt = wiki_db()->prepare(
-        "INSERT INTO link_preview_cache (url, final_url, title, description, image, site_name, fetched_at)
-         VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-         ON CONFLICT(url) DO UPDATE SET final_url = excluded.final_url, title = excluded.title,
-           description = excluded.description, image = excluded.image, site_name = excluded.site_name,
-           fetched_at = datetime('now')"
-    );
+    $stmt = wiki_db()->prepare(wiki_db_driver() === "mysql"
+        ? "INSERT INTO link_preview_cache (url, final_url, title, description, image, site_name, fetched_at)
+           VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+           ON DUPLICATE KEY UPDATE final_url = VALUES(final_url), title = VALUES(title),
+             description = VALUES(description), image = VALUES(image), site_name = VALUES(site_name),
+             fetched_at = CURRENT_TIMESTAMP"
+        : "INSERT INTO link_preview_cache (url, final_url, title, description, image, site_name, fetched_at)
+           VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(url) DO UPDATE SET final_url = excluded.final_url, title = excluded.title,
+             description = excluded.description, image = excluded.image, site_name = excluded.site_name,
+             fetched_at = datetime('now')");
     $stmt->execute([
         $key, $preview["url"], $preview["title"], $preview["description"],
         $preview["image"], $preview["siteName"],
@@ -377,10 +384,12 @@ function wiki_preview_cache_set( $key, $preview )
 function wiki_preview_extend_failed_cache( $key, $ttl_days, $failure_ttl_days )
 {
     $offset = (int) $failure_ttl_days - (int) $ttl_days;
-    $stmt = wiki_db()->prepare(
-        "UPDATE link_preview_cache SET fetched_at = datetime('now', ?) WHERE url = ?"
-    );
-    $stmt->execute([$offset . " days", $key]);
+    $mysql = wiki_db_driver() === "mysql";
+    $stmt = wiki_db()->prepare($mysql
+        ? "UPDATE link_preview_cache
+           SET fetched_at = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL ? DAY) WHERE url = ?"
+        : "UPDATE link_preview_cache SET fetched_at = datetime('now', ?) WHERE url = ?");
+    $stmt->execute([$mysql ? $offset : $offset . " days", $key]);
 }
 
 function wiki_fetch_link_preview( $raw_url )

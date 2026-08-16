@@ -70,7 +70,7 @@ function wiki_quick_post_update()
     $id = wiki_uarg_int("id");
     wiki_owned_quick_post($id);
 
-    $stmt = wiki_db()->prepare("UPDATE quick_posts SET content = ?, updated_at = datetime('now') WHERE id = ?");
+    $stmt = wiki_db()->prepare("UPDATE quick_posts SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
     $stmt->execute([wiki_quick_content(wiki_input("content", "")), $id]);
 
     return wiki_ok(["quickPost" => wiki_quick_post_map(wiki_owned_quick_post($id))]);
@@ -115,7 +115,7 @@ function wiki_quick_post_promote()
 
     $content = trim((string) $quick["content"]);
     if ($content === "") {
-        wiki_abort(400, "내용이 비어 있어 포스트로 옮길 수 없습니다.");
+        wiki_abort(400, "QUICK_POST_EMPTY_PROMOTE");
     }
 
     $settings = wiki_settings();
@@ -175,7 +175,7 @@ function wiki_owned_quick_post( $id )
     $row = $stmt->fetch();
 
     if (!$row) {
-        wiki_abort(404, "간단 포스트를 찾을 수 없습니다.");
+        wiki_abort(404, "QUICK_POST_NOT_FOUND");
     }
 
     return $row;
@@ -185,7 +185,7 @@ function wiki_quick_content( $value )
 {
     $content = trim((string) $value);
     if ($content === "") {
-        wiki_abort(400, "내용을 입력하세요.");
+        wiki_abort(400, "QUICK_POST_CONTENT_REQUIRED");
     }
     return $content;
 }

@@ -45,8 +45,8 @@ function wiki_require_login()
     $user = wiki_current_user();
     if (!$user) {
         wiki_abort(401, wiki_request_token() === ""
-            ? "로그인이 필요합니다."
-            : "세션이 만료되었습니다. 다시 로그인하세요.");
+            ? "UNAUTHORIZED"
+            : "SESSION_EXPIRED");
     }
     return $user;
 }
@@ -68,7 +68,7 @@ function wiki_require_writer()
     $row = $stmt->fetch();
 
     if (!$row || $row["role"] !== "writer" || ($user["canWrite"] ?? false) !== true) {
-        wiki_abort(403, "글 작성은 위키 작성자만 할 수 있습니다.");
+        wiki_abort(403, "WRITER_ONLY");
     }
 
     $writer = wiki_public_user($row);

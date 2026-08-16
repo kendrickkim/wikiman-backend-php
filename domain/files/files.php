@@ -12,7 +12,7 @@ function wiki_file_open()
     $path = wiki_upload_path($name);
 
     if (!$path || !wiki_can_access_upload($name)) {
-        wiki_abort(404, "파일을 찾을 수 없습니다.");
+        wiki_abort(404, "FILE_NOT_FOUND");
     }
 
     wiki_send_file($path);

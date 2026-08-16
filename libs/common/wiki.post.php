@@ -234,7 +234,7 @@ function wiki_normalize_attachments( $value )
 
 function wiki_content_upload_names( $content )
 {
-    preg_match_all('#/api/(?:posts/\d+/)?files/([^/?\#"\'<>\s]+)#u', (string) $content, $matches);
+    preg_match_all('#/api/(?:posts/\d+/)?files/([^/?\#"\'<>\s\\\\)]+)#u', (string) $content, $matches);
     return array_values(array_unique(array_map(function ($name) {
         return basename(rawurldecode($name));
     }, $matches[1] ?? [])));
@@ -246,7 +246,7 @@ function wiki_content_upload_names( $content )
 function wiki_prepare_content( $editor_type, $content, $post_id )
 {
     $sanitized = wiki_sanitize_content($editor_type, $content);
-    $replaced = preg_replace_callback('#/api/files/([^/?\#"\'<>\s]+)#u', function ($match) use ($post_id) {
+    $replaced = preg_replace_callback('#/api/files/([^/?\#"\'<>\s\\\\)]+)#u', function ($match) use ($post_id) {
         return "/api/posts/" . (int) $post_id . "/files/" . $match[1];
     }, $sanitized);
 
@@ -260,7 +260,9 @@ function wiki_sync_upload_refs( PDO $db, $post_id )
     $stmt = $db->prepare("DELETE FROM upload_refs WHERE post_id = ?");
     $stmt->execute([$post_id]);
 
-    $insert = $db->prepare("INSERT OR IGNORE INTO upload_refs (post_id, stored_name) VALUES (?, ?)");
+    $insert = $db->prepare(wiki_db_driver() === "mysql"
+        ? "INSERT IGNORE INTO upload_refs (post_id, stored_name) VALUES (?, ?)"
+        : "INSERT OR IGNORE INTO upload_refs (post_id, stored_name) VALUES (?, ?)");
 
     $stmt = $db->prepare("SELECT stored_name FROM post_attachments WHERE post_id = ?");
     $stmt->execute([$post_id]);
@@ -318,9 +320,10 @@ function wiki_apply_homepage( PDO $db, $post_id, $value, $sort = null )
     }
 
     $order = is_numeric($sort) ? max(0, min(9999, (int) $sort)) : 0;
-    $stmt = $db->prepare(
-        "INSERT INTO homepage_posts (post_id, sort_order) VALUES (?, ?)
-         ON CONFLICT(post_id) DO UPDATE SET sort_order = excluded.sort_order"
-    );
+    $stmt = $db->prepare(wiki_db_driver() === "mysql"
+        ? "INSERT INTO homepage_posts (post_id, sort_order) VALUES (?, ?)
+           ON DUPLICATE KEY UPDATE sort_order = VALUES(sort_order)"
+        : "INSERT INTO homepage_posts (post_id, sort_order) VALUES (?, ?)
+           ON CONFLICT(post_id) DO UPDATE SET sort_order = excluded.sort_order");
     $stmt->execute([(int) $post_id, $order]);
 }

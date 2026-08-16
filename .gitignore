@@ -4,3 +4,7 @@
 /data/uploads/*
 !/data/uploads/.gitkeep
 /.env
+/public/*
+!/public/index.php
+!/public/install.php
+!/public/.htaccess
