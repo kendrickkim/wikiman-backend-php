@@ -15,5 +15,5 @@ function wiki_file_open()
         wiki_abort(404, "FILE_NOT_FOUND");
     }
 
-    wiki_send_file($path);
+    wiki_send_thumbnail_or_original($path, $name);
 }

@@ -76,6 +76,7 @@ function wiki_settings( $user = null )
         "quickPostPromoteEditor" => $values["quick_post_promote_editor"] ?? "ask",
         "linkPreviewCacheTtlDays" => (int) ($values["link_preview_cache_ttl_days"] ?? 10),
         "linkPreviewFailureTtlDays" => (int) ($values["link_preview_failure_ttl_days"] ?? 1),
+        "thumbnailCacheDays" => (int) ($values["thumbnail_cache_days"] ?? 100),
         "homePostIds" => $home_ids,
         "hasHomepage" => count($home_ids) > 0,
         "topMenuItems" => wiki_top_menu_items($user),
@@ -256,6 +257,9 @@ function wiki_setting_schema()
         }],
         "linkPreviewFailureTtlDays" => ["link_preview_failure_ttl_days", function ($value) {
             return wiki_setting_integer($value, 1, 365, "LINK_PREVIEW_FAILURE_TTL_INVALID");
+        }],
+        "thumbnailCacheDays" => ["thumbnail_cache_days", function ($value) {
+            return wiki_setting_integer($value, 1, 365, "THUMBNAIL_CACHE_DAYS_INVALID");
         }],
     ];
 }

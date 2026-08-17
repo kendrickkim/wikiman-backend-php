@@ -51,6 +51,7 @@ function wiki_config( $key = null, $reload = false )
                 "charset" => preg_match('/^[a-zA-Z0-9_]+$/', $mysql_charset) ? $mysql_charset : "utf8mb4",
             ],
             "uploads" => $data_dir . "/uploads",
+            "thumbnails" => $data_dir . "/thumbnails",
             "jwt_secret" => $installed ? wiki_jwt_secret($data_dir) : "",
             "jwt_ttl" => 60 * 60 * 24 * 7,
             "allow_register" => strtolower((string) (getenv("ALLOW_REGISTER") ?: "true")) !== "false",

@@ -22,6 +22,38 @@ function wiki_social_absolute_url( $origin, $value )
     return rtrim((string) $origin, "/") . "/" . ltrim($raw, "/");
 }
 
+function wiki_social_thumbnail_url( $origin, $value )
+{
+    $raw = trim((string) $value);
+    $parts = parse_url($raw);
+    if ($raw === "" || !is_array($parts)) return $raw;
+    $path = (string) ($parts["path"] ?? "");
+    if (!preg_match('#^/api/(?:files/[^/]+|posts/\d+/files/[^/]+)$#', $path)) {
+        return $raw;
+    }
+
+    if (isset($parts["host"])) {
+        $origin_parts = parse_url($origin);
+        if (!is_array($origin_parts)) return $raw;
+        $origin_scheme = strtolower((string) ($origin_parts["scheme"] ?? "http"));
+        $value_scheme = strtolower((string) ($parts["scheme"] ?? $origin_scheme));
+        $origin_port = (int) ($origin_parts["port"] ?? ($origin_scheme === "https" ? 443 : 80));
+        $value_port = (int) ($parts["port"] ?? ($value_scheme === "https" ? 443 : 80));
+        $same_host = strtolower((string) ($parts["host"] ?? "")) === strtolower((string) ($origin_parts["host"] ?? ""))
+            && $value_scheme === $origin_scheme
+            && $value_port === $origin_port;
+        if (!$same_host) return $raw;
+    }
+
+    if (preg_match('/([?&])thumb=[^&#]*/i', $raw)) {
+        return preg_replace('/([?&])thumb=[^&#]*/i', '$1thumb=1', $raw, 1) ?? $raw;
+    }
+    $fragment_at = strpos($raw, "#");
+    $base = $fragment_at === false ? $raw : substr($raw, 0, $fragment_at);
+    $fragment = $fragment_at === false ? "" : substr($raw, $fragment_at);
+    return $base . (str_contains($base, "?") ? "&" : "?") . "thumb=1" . $fragment;
+}
+
 function wiki_social_public_origin()
 {
     $configured = rtrim(trim((string) getenv("PUBLIC_URL")), "/");
@@ -105,7 +137,8 @@ function wiki_social_first_image( $post, $origin )
             $image = "/api/posts/" . (int) $post["id"] . "/files/" . rawurlencode((string) $name);
         }
     }
-    $resolved = wiki_social_absolute_url($origin, $image ?: WIKI_SOCIAL_DEFAULT_ICON);
+    $image = wiki_social_thumbnail_url($origin, $image ?: WIKI_SOCIAL_DEFAULT_ICON);
+    $resolved = wiki_social_absolute_url($origin, $image);
     return $resolved !== "" ? $resolved : wiki_social_absolute_url($origin, WIKI_SOCIAL_DEFAULT_ICON);
 }
 

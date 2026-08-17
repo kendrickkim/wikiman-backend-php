@@ -122,6 +122,7 @@ function wiki_upload_orphans_cleanup()
         $path = wiki_upload_path($file["name"]);
         if ($path) {
             @unlink($path);
+            wiki_delete_thumbnail($file["name"]);
         }
     }
 

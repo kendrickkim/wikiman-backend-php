@@ -16,7 +16,7 @@ API 계약을 구현합니다. SQLite와 MySQL/MariaDB를 지원합니다.
 - PHP 8.1 이상
 - Apache와 `mod_rewrite`, 또는 Nginx와 PHP-FPM
 - [PHAST API v2](https://github.com/kendrickkim/phastapiv2)
-- `mbstring`, `fileinfo`, `json`, `openssl`, `curl`, `dom`, `zlib`
+- `mbstring`, `fileinfo`, `json`, `openssl`, `curl`, `dom`, `zlib`, `gd`
 - SQLite용 `pdo_sqlite` 또는 MySQL/MariaDB용 `pdo_mysql`
 
 Node.js를 사용할 수 없는 호스팅이라면 이 백엔드를 선택하세요. Node.js를 실행할

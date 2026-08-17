@@ -17,7 +17,7 @@ You need:
 - PHP 8.1 or newer
 - Apache with `mod_rewrite`, or Nginx with PHP-FPM
 - [PHAST API v2](https://github.com/kendrickkim/phastapiv2)
-- `mbstring`, `fileinfo`, `json`, `openssl`, `curl`, `dom`, and `zlib`
+- `mbstring`, `fileinfo`, `json`, `openssl`, `curl`, `dom`, `zlib`, and `gd`
 - `pdo_sqlite` for SQLite, or `pdo_mysql` for MySQL/MariaDB
 
 Use this PHP backend when your host cannot run Node.js. If Node.js is available,

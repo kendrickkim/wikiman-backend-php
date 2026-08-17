@@ -25,6 +25,8 @@ function wiki_db( $action = null )
 
     wiki_make_dir(wiki_config("data_dir"));
     wiki_make_dir(wiki_config("uploads"));
+    wiki_make_dir(wiki_config("thumbnails"));
+    @chmod(wiki_config("thumbnails"), 0750);
 
     if (!wiki_is_installed()) {
         wiki_abort(503, "INSTALL_REQUIRED", ["installUrl" => "/install.php"]);
@@ -205,7 +207,7 @@ CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status, deleted_at);
 SQL);
 
     $defaults = [
-        "schema_version" => "11",
+        "schema_version" => "12",
         "site_title" => "Wikiman",
         "site_language" => "ko-KR",
         "theme" => "light",
@@ -229,6 +231,7 @@ SQL);
         "quick_post_promote_editor" => "ask",
         "link_preview_cache_ttl_days" => "10",
         "link_preview_failure_ttl_days" => "1",
+        "thumbnail_cache_days" => "100",
     ];
 
     $insert = $db->prepare("INSERT OR IGNORE INTO settings (`key`, `value`) VALUES (?, ?)");
@@ -358,7 +361,7 @@ function wiki_ensure_schema_mysql( PDO $db )
     foreach ($statements as $sql) $db->exec($sql);
 
     $defaults = [
-        "schema_version" => "11", "site_title" => "Wikiman", "site_language" => "ko-KR",
+        "schema_version" => "12", "site_title" => "Wikiman", "site_language" => "ko-KR",
         "theme" => "light", "plantuml_server" => "https://www.plantuml.com/plantuml",
         "default_editor" => "ckeditor", "default_editor_mobile" => "ckeditor",
         "favicon" => "", "max_attachment_mb" => "20", "category_tree_expand" => "expanded",
@@ -367,7 +370,7 @@ function wiki_ensure_schema_mysql( PDO $db )
         "blog_show_homepage" => "0", "blog_posts_per_page" => "10", "code_line_numbers" => "0",
         "quick_post_editor" => "tui", "quick_post_promote_source_mode" => "ask",
         "quick_post_promote_editor" => "ask", "link_preview_cache_ttl_days" => "10",
-        "link_preview_failure_ttl_days" => "1",
+        "link_preview_failure_ttl_days" => "1", "thumbnail_cache_days" => "100",
     ];
     $insert = $db->prepare("INSERT IGNORE INTO settings (`key`, `value`) VALUES (?, ?)");
     foreach ($defaults as $key => $value) $insert->execute([$key, $value]);

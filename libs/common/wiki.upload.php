@@ -265,6 +265,7 @@ function wiki_unlink_unused_uploads( $names )
             $path = wiki_upload_path(basename($name));
             if ($path) {
                 @unlink($path);
+                wiki_delete_thumbnail(basename($name));
             }
         }
     }
@@ -326,7 +327,7 @@ function wiki_can_access_upload( $name, $post_id = null )
 /**
  * 브라우저에서 실행될 수 있는 형식은 항상 첨부(다운로드)로 내려보낸다.
  */
-function wiki_send_file( $path, $download_name = null, $mime = null )
+function wiki_send_file( $path, $download_name = null, $mime = null, $options = [] )
 {
     $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
     $dangerous = in_array($extension, ["html", "htm", "svg", "xhtml", "xml", "js", "mjs", "css"], true);
@@ -338,13 +339,32 @@ function wiki_send_file( $path, $download_name = null, $mime = null )
     }
 
     $filename = $download_name ?: basename($path);
+    $size = (int) filesize($path);
+    $mtime = (int) (@filemtime($path) ?: time());
 
     header("X-Content-Type-Options: nosniff");
     header("X-Frame-Options: DENY");
+    if (!empty($options["cache_control"])) {
+        header("Cache-Control: " . $options["cache_control"]);
+    }
+    if (!empty($options["conditional"])) {
+        $etag = '"' . hash("sha256", $mtime . ":" . $size . ":" . basename($path)) . '"';
+        header("ETag: " . $etag);
+        header("Last-Modified: " . gmdate("D, d M Y H:i:s", $mtime) . " GMT");
+        $if_none_match = trim((string) ($_SERVER["HTTP_IF_NONE_MATCH"] ?? ""));
+        $if_modified_since = strtotime((string) ($_SERVER["HTTP_IF_MODIFIED_SINCE"] ?? "")) ?: 0;
+        if (($if_none_match !== "" && $if_none_match === $etag)
+            || ($if_none_match === "" && $if_modified_since >= $mtime)) {
+            http_response_code(304);
+            exit(0);
+        }
+    }
     header("Content-Type: " . ($dangerous ? "application/octet-stream" : $detected));
     header("Content-Disposition: " . ($dangerous || $download_name ? "attachment" : "inline")
         . "; filename*=UTF-8''" . rawurlencode($filename));
-    header("Content-Length: " . filesize($path));
-    readfile($path);
+    header("Content-Length: " . $size);
+    if (strtoupper((string) ($_SERVER["REQUEST_METHOD"] ?? "GET")) !== "HEAD") {
+        readfile($path);
+    }
     exit(0);
 }

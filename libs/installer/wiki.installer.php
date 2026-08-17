@@ -140,6 +140,9 @@ function wiki_installer_submit( $input )
             throw new RuntimeException("설치 토큰이 올바르지 않습니다.");
         }
     }
+    if (!extension_loaded("gd")) {
+        throw new RuntimeException("이미지 썸네일 생성을 위해 PHP gd 확장이 필요합니다.");
+    }
 
     $site_title = trim((string) ($input["site_title"] ?? ""));
     $username = trim((string) ($input["username"] ?? ""));
@@ -292,7 +295,7 @@ function wiki_installer_render( $error = "", $status = 200 )
     label{display:block;margin:12px 0 5px;font-weight:650}input,select{box-sizing:border-box;width:100%;padding:10px;border:1px solid #aeb8c2;border-radius:7px;background:#fff;color:#17202a}
     .row{display:grid;grid-template-columns:2fr 1fr;gap:12px}.error{background:#ffe7e7;color:#8b1111;padding:12px;border-radius:8px}
     button{border:0;border-radius:8px;background:#1769aa;color:#fff;padding:12px 20px;font-weight:700;cursor:pointer}
-    small{color:#5e6b76}@media(prefers-color-scheme:dark){body{background:#111820;color:#e9eef2}main{background:#1b2530}input,select{background:#111820;color:#e9eef2;border-color:#52606d}}
+    small{color:#5e6b76}.requirement{padding:10px 12px;border-radius:8px;background:#e9f7ef}.requirement.missing{background:#ffe7e7;color:#8b1111}@media(prefers-color-scheme:dark){body{background:#111820;color:#e9eef2}main{background:#1b2530}input,select{background:#111820;color:#e9eef2;border-color:#52606d}}
   </style>
   <script>function toggleDb(){document.getElementById('mysql').hidden=document.getElementById('db_driver').value!=='mysql'}</script>
 </head>
@@ -300,6 +303,9 @@ function wiki_installer_render( $error = "", $status = 200 )
 <main>
   <h1>Wikiman 설치</h1>
   <p>데이터베이스와 첫 관리자 계정을 설정합니다. 완료 전에는 Wikiman 프론트엔드를 제공하지 않습니다.</p>
+  <p class="requirement<?= extension_loaded("gd") ? "" : " missing" ?>">
+    PHP GD: <?= extension_loaded("gd") ? "사용 가능" : "설치 필요 (JPEG/PNG/GIF/WebP 썸네일 생성)" ?>
+  </p>
   <?php if ($error !== ""): ?><div class="error"><?= $e($error) ?></div><?php endif; ?>
   <form method="post" autocomplete="off">
     <input type="hidden" name="token" value="<?= $e($token) ?>">
