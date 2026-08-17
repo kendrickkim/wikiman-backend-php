@@ -184,14 +184,12 @@ function wiki_backup_file_list( $database_path = null )
     }
     $files[] = ["path" => "wiki.db", "abs" => $db_path, "size" => (int) filesize($db_path)];
 
-    foreach (scandir(wiki_config("uploads")) ?: [] as $name) {
-        if ($name === "." || $name === ".." || str_starts_with($name, ".")) {
-            continue;
-        }
-        $path = wiki_config("uploads") . "/" . $name;
-        if (is_file($path)) {
-            $files[] = ["path" => "uploads/" . $name, "abs" => $path, "size" => (int) filesize($path)];
-        }
+    foreach (wiki_walk_upload_files() as $file) {
+        $files[] = [
+            "path" => "uploads/" . $file["name"],
+            "abs" => $file["path"],
+            "size" => $file["size"],
+        ];
     }
     usort($files, function ($a, $b) {
         if ($a["path"] === "wiki.db") return -1;
@@ -592,10 +590,22 @@ function wiki_backup_copy_uploads( $source, $destination )
     if (!is_dir($destination)) mkdir($destination, 0750, true);
     if (!is_dir($source)) return;
     foreach (scandir($source) ?: [] as $name) {
-        if ($name === "." || $name === ".." || str_starts_with($name, ".") || !is_file($source . "/" . $name)) {
+        if ($name === "." || $name === ".." || str_starts_with($name, ".")) {
             continue;
         }
-        if (!copy($source . "/" . $name, $destination . "/" . $name)) {
+        $from = $source . "/" . $name;
+        $to = $destination . "/" . $name;
+        if (is_dir($from)) {
+            if (!wiki_upload_is_month_folder($name)) {
+                continue;
+            }
+            wiki_backup_copy_uploads($from, $to);
+            continue;
+        }
+        if (!is_file($from)) {
+            continue;
+        }
+        if (!copy($from, $to)) {
             wiki_backup_fail("첨부 파일을 복사할 수 없습니다: " . $name, 500);
         }
     }

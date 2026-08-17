@@ -78,11 +78,23 @@ function wiki_check_upload( $file, $max_bytes )
     }
 }
 
+function wiki_upload_month_folder( $time = null )
+{
+    $ts = $time === null ? time() : (int) $time;
+    return date("Y-m", $ts);
+}
+
+function wiki_upload_is_month_folder( $name )
+{
+    return (bool) preg_match('/^\d{4}-\d{2}$/', (string) $name);
+}
+
 /**
- * 업로드 파일을 data/uploads 로 옮기고 저장 정보를 돌려준다.
- * MIME 은 확장자가 아니라 파일 내용으로 판별한다.
+ * 업로드 파일을 data/uploads/YYYY-MM 로 옮기고 저장 정보를 돌려준다.
+ * DB·URL의 storedName 은 basename 만 유지한다. MIME 은 파일 내용으로 판별한다.
+ * 파비콘은 $flat=true 로 호출해 루트에 둔다.
  */
-function wiki_store_upload( $file, $max_bytes, $allowed_mime = null, $type_message = null )
+function wiki_store_upload( $file, $max_bytes, $allowed_mime = null, $type_message = null, $flat = false )
 {
     wiki_check_upload($file, $max_bytes);
 
@@ -103,7 +115,17 @@ function wiki_store_upload( $file, $max_bytes, $allowed_mime = null, $type_messa
     $stored_name = base_convert((string) (int) (microtime(true) * 1000), 10, 36)
         . "-" . bin2hex(random_bytes(6)) . ($ext !== "" ? "." . $ext : "");
 
-    $target = wiki_config("uploads") . "/" . $stored_name;
+    $uploads = wiki_config("uploads");
+    if ($flat) {
+        $target_dir = $uploads;
+    } else {
+        $target_dir = $uploads . "/" . wiki_upload_month_folder();
+        if (!is_dir($target_dir) && !@mkdir($target_dir, 0750, true) && !is_dir($target_dir)) {
+            wiki_abort(500, "UPLOAD_FAILED");
+        }
+    }
+
+    $target = $target_dir . "/" . $stored_name;
     $moved = is_uploaded_file($tmp) ? move_uploaded_file($tmp, $target) : rename($tmp, $target);
     if (!$moved) {
         wiki_abort(500, "UPLOAD_FAILED");
@@ -121,6 +143,7 @@ function wiki_store_upload( $file, $max_bytes, $allowed_mime = null, $type_messa
 
 /**
  * 경로 탈출을 막고 실제 파일일 때만 경로를 돌려준다.
+ * flat 파일을 우선하고, 없으면 YYYY-MM 하위만 탐색한다.
  */
 function wiki_upload_path( $name )
 {
@@ -129,8 +152,59 @@ function wiki_upload_path( $name )
         return null;
     }
 
-    $path = wiki_config("uploads") . "/" . $base;
-    return is_file($path) ? $path : null;
+    $uploads = wiki_config("uploads");
+    $flat = $uploads . "/" . $base;
+    if (is_file($flat)) {
+        return $flat;
+    }
+
+    foreach (scandir($uploads) ?: [] as $dir) {
+        if ($dir === "." || $dir === ".." || !wiki_upload_is_month_folder($dir)) {
+            continue;
+        }
+        $candidate = $uploads . "/" . $dir . "/" . $base;
+        if (is_file($candidate)) {
+            return $candidate;
+        }
+    }
+
+    return null;
+}
+
+function wiki_walk_upload_files()
+{
+    $uploads = wiki_config("uploads");
+    $files = [];
+
+    foreach (scandir($uploads) ?: [] as $name) {
+        if ($name === "." || $name === ".." || str_starts_with($name, ".")) {
+            continue;
+        }
+        $path = $uploads . "/" . $name;
+        if (is_file($path)) {
+            $files[] = ["name" => $name, "path" => $path, "size" => (int) filesize($path)];
+            continue;
+        }
+        if (!is_dir($path) || !wiki_upload_is_month_folder($name)) {
+            continue;
+        }
+        foreach (scandir($path) ?: [] as $child) {
+            if ($child === "." || $child === ".." || str_starts_with($child, ".")) {
+                continue;
+            }
+            $child_path = $path . "/" . $child;
+            if (!is_file($child_path)) {
+                continue;
+            }
+            $files[] = ["name" => $child, "path" => $child_path, "size" => (int) filesize($child_path)];
+        }
+    }
+
+    usort($files, function ($a, $b) {
+        return strcmp($a["name"], $b["name"]);
+    });
+
+    return $files;
 }
 
 function wiki_favicon_stored_name()
@@ -164,23 +238,14 @@ function wiki_used_upload_names()
 function wiki_orphan_uploads()
 {
     $used = wiki_used_upload_names();
-    $uploads = wiki_config("uploads");
     $files = [];
 
-    foreach (scandir($uploads) ?: [] as $name) {
-        if ($name === "." || $name === ".." || str_starts_with($name, ".")) {
+    foreach (wiki_walk_upload_files() as $file) {
+        if (isset($used[$file["name"]])) {
             continue;
         }
-        $path = $uploads . "/" . $name;
-        if (!is_file($path) || isset($used[$name])) {
-            continue;
-        }
-        $files[] = ["name" => $name, "size" => (int) filesize($path)];
+        $files[] = ["name" => $file["name"], "size" => $file["size"]];
     }
-
-    usort($files, function ($a, $b) {
-        return strcmp($a["name"], $b["name"]);
-    });
 
     return $files;
 }
@@ -197,7 +262,10 @@ function wiki_unlink_unused_uploads( $names )
         );
         $stmt->execute([$name, $name]);
         if (!$stmt->fetchColumn()) {
-            @unlink(wiki_config("uploads") . "/" . basename($name));
+            $path = wiki_upload_path(basename($name));
+            if ($path) {
+                @unlink($path);
+            }
         }
     }
 }

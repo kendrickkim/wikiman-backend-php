@@ -51,7 +51,8 @@ function wiki_upload_favicon()
         $files[0],
         2 * 1024 * 1024,
         $allowed,
-        "FAVICON_TYPE_INVALID"
+        "FAVICON_TYPE_INVALID",
+        true
     );
 
     return wiki_ok(["url" => $file["url"]], 201);
@@ -118,7 +119,10 @@ function wiki_upload_orphans_cleanup()
 {
     $files = wiki_orphan_uploads();
     foreach ($files as $file) {
-        @unlink(wiki_config("uploads") . "/" . $file["name"]);
+        $path = wiki_upload_path($file["name"]);
+        if ($path) {
+            @unlink($path);
+        }
     }
 
     return wiki_ok([

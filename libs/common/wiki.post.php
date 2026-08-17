@@ -204,7 +204,6 @@ function wiki_normalize_attachments( $value )
         return [];
     }
 
-    $uploads = wiki_config("uploads");
     $result = [];
     $seen = [];
 
@@ -213,7 +212,8 @@ function wiki_normalize_attachments( $value )
             continue;
         }
         $name = basename((string) ($item["storedName"] ?? $item["stored_name"] ?? ""));
-        if ($name === "" || isset($seen[$name]) || !is_file($uploads . "/" . $name)) {
+        $path = $name !== "" ? wiki_upload_path($name) : null;
+        if ($name === "" || isset($seen[$name]) || !$path) {
             continue;
         }
         $seen[$name] = true;
@@ -222,7 +222,7 @@ function wiki_normalize_attachments( $value )
             "storedName" => $name,
             "originalName" => $original !== "" ? $original : $name,
             "mimeType" => mb_substr((string) ($item["mimeType"] ?? $item["mime_type"] ?? "application/octet-stream"), 0, 120),
-            "size" => max(0, (int) ($item["size"] ?? filesize($uploads . "/" . $name))),
+            "size" => max(0, (int) ($item["size"] ?? filesize($path))),
         ];
         if (count($result) >= 50) {
             break;
