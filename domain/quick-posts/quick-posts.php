@@ -126,7 +126,8 @@ function wiki_quick_post_promote()
     $mode = $settings["quickPostPromoteSourceMode"];
     $keep = $mode === "keep" || ($mode === "ask" && wiki_input("keepSource", false) === true);
 
-    $post_id = wiki_transaction(function ( PDO $db ) use ($user, $editor, $content, $keep, $id) {
+    $source_editor = $settings["quickPostEditor"] ?? "tui";
+    $post_id = wiki_transaction(function ( PDO $db ) use ($user, $editor, $content, $keep, $id, $source_editor) {
         $stmt = $db->prepare(
             "INSERT INTO posts (title, slug, category_id, author_id, visibility, status, editor_type, content)
              VALUES ('', ?, NULL, ?, 'public', 'draft', ?, '')"
@@ -135,7 +136,14 @@ function wiki_quick_post_promote()
         $post_id = (int) $db->lastInsertId();
 
         $stmt = $db->prepare("UPDATE posts SET content = ? WHERE id = ?");
-        $stmt->execute([wiki_prepare_content($editor, wiki_quick_content_for_editor($content, $editor), $post_id), $post_id]);
+        $stmt->execute([
+            wiki_prepare_content(
+                $editor,
+                wiki_quick_content_for_editor($content, $editor, $source_editor),
+                $post_id
+            ),
+            $post_id,
+        ]);
 
         wiki_sync_upload_refs($db, $post_id);
 
@@ -191,32 +199,9 @@ function wiki_quick_content( $value )
 }
 
 /**
- * 줄바꿈만 있는 평문을 대상 에디터가 이해하는 형식으로 감싼다.
+ * 간단 포스트 에디터 형식을 대상 글 에디터 형식으로 옮긴다.
  */
-function wiki_quick_content_for_editor( $content, $editor )
+function wiki_quick_content_for_editor( $content, $editor, $source_editor = "tui" )
 {
-    $paragraphs = array_filter(array_map("trim", preg_split('/\n{2,}/', $content) ?: []), function ($text) {
-        return $text !== "";
-    });
-
-    if ($editor === "editorjs") {
-        $blocks = [];
-        foreach ($paragraphs as $text) {
-            $blocks[] = [
-                "type" => "paragraph",
-                "data" => ["text" => nl2br(htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8"))],
-            ];
-        }
-        return json_encode(["blocks" => $blocks], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    }
-
-    if (in_array($editor, ["ckeditor", "summernote", "html"], true)) {
-        $parts = [];
-        foreach ($paragraphs as $text) {
-            $parts[] = "<p>" . nl2br(htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8")) . "</p>";
-        }
-        return implode("", $parts);
-    }
-
-    return $content;
+    return wiki_convert_editor_content($content, $source_editor, $editor);
 }
